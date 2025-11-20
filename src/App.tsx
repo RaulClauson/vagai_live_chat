@@ -1,5 +1,6 @@
+// --- App.tsx (Site na Vercel) ---
 import { useConversation, type SessionConfig } from "@elevenlabs/react";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, getDoc } from "firebase/firestore";
 
@@ -35,10 +36,6 @@ export default function App() {
 
   const [userData, setUserData] = useState<UserData | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [isMuted, setIsMuted] = useState(false);
-
-  // Referência para o stream de áudio (para poder mutar)
-  const audioStreamRef = useRef<MediaStream | null>(null);
 
   const conversation = useConversation({
     onConnect: () => {
@@ -46,11 +43,8 @@ export default function App() {
     },
     onDisconnect: () => {
       setStatus("ready");
-      setMessages([]); // Limpa mensagens ao desconectar
-      setIsMuted(false);
     },
     onMessage: (message: Message) => {
-      // Adiciona a mensagem ao histórico visual
       setMessages((prev) => [...prev, message]);
     },
     onError: (error) => {
@@ -95,14 +89,18 @@ export default function App() {
   const startInterview = async () => {
     try {
       setStatus("loading");
-      // Captura o stream de áudio
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioStreamRef.current = stream;
+      setMessages([]); // Limpa o chat anterior
 
-      const resumeContext = `Skills: ${userData?.resume?.skills?.join(
-        ", "
-      )}. Localização: ${userData?.resume?.suggestedLocation}`;
+      // Solicita permissão antes apenas para garantir que o navegador não bloqueie
+      await navigator.mediaDevices.getUserMedia({ audio: true });
 
+      const skillsArray = userData?.resume?.skills || [];
+      const skillsText =
+        skillsArray.length > 0 ? skillsArray.join(", ") : "Geral";
+      const locationText = userData?.resume?.suggestedLocation || "Brasil";
+      const resumeContext = `Skills: ${skillsText}. Localização: ${locationText}`;
+
+      // Inicia a sessão padrão (a lib gerencia o microfone)
       await conversation.startSession({
         agentId: "agent_7401kacjnt4eeyz9m8jgn65xn4ev",
         connectionType: "websocket",
@@ -114,37 +112,22 @@ export default function App() {
           candidate_name: userName,
         },
       } as SessionConfig);
-      // O status mudará para 'connected' via callback onConnect
     } catch (error) {
-      console.error(error);
+      console.error("Erro ao iniciar:", error);
       setStatus("error");
     }
   };
 
   const endInterview = async () => {
     await conversation.endSession();
-    // Para o uso do microfone
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach((track) => track.stop());
-      audioStreamRef.current = null;
-    }
   };
 
-  const toggleMute = () => {
-    if (audioStreamRef.current) {
-      const audioTrack = audioStreamRef.current.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled; // Inverte o estado (enabled = false é mudo)
-        setIsMuted(!audioTrack.enabled);
-      }
-    }
-  };
-
+  // Renderizações
   if (status === "loading")
     return <div style={styles.container}>Carregando dados...</div>;
   if (status === "error")
     return (
-      <div style={styles.container}>Erro ao carregar perfil ou conectar.</div>
+      <div style={styles.container}>Erro ao carregar. Tente recarregar.</div>
     );
 
   return (
@@ -154,9 +137,10 @@ export default function App() {
       {/* Área de Chat / Transcrição */}
       <div style={styles.chatBox}>
         {messages.length === 0 && (
-          <p style={{ color: "#888", textAlign: "center", marginTop: 20 }}>
-            A entrevista começará em breve...
-          </p>
+          <div style={{ textAlign: "center", marginTop: 40, color: "#888" }}>
+            <div style={{ fontSize: "40px", marginBottom: 10 }}>🎙️</div>
+            <p>Toque em começar e aguarde o recrutador falar.</p>
+          </div>
         )}
         {messages.map((msg, index) => (
           <div
@@ -165,6 +149,7 @@ export default function App() {
               ...styles.messageBubble,
               alignSelf: msg.source === "user" ? "flex-end" : "flex-start",
               background: msg.source === "user" ? "rgb(71, 2, 225)" : "#333",
+              color: "white",
             }}
           >
             <strong>{msg.source === "user" ? "Você" : "Recrutador"}:</strong>{" "}
@@ -176,24 +161,12 @@ export default function App() {
       {/* Controles */}
       <div style={styles.controls}>
         {status === "connected" ? (
-          <>
-            <button
-              onClick={toggleMute}
-              style={{
-                ...styles.btnMute,
-                background: isMuted ? "#F59E0B" : "#555",
-              }}
-            >
-              {isMuted ? "🔇 Desmutar" : "🎤 Mutar"}
-            </button>
-
-            <button onClick={endInterview} style={styles.btnStop}>
-              Encerrar
-            </button>
-          </>
+          <button onClick={endInterview} style={styles.btnStop}>
+            Encerrar Entrevista
+          </button>
         ) : (
           <button onClick={startInterview} style={styles.btnStart}>
-            Começar Entrevista
+            {messages.length > 0 ? "Nova Entrevista" : "Começar Entrevista"}
           </button>
         )}
       </div>
@@ -208,7 +181,6 @@ const styles = {
     height: "100vh",
     flexDirection: "column",
     alignItems: "center",
-    justifyContent: "center",
     background: "rgb(13, 11, 13)",
     color: "rgb(255, 229, 255)",
     fontFamily: "sans-serif",
@@ -216,61 +188,66 @@ const styles = {
     boxSizing: "border-box",
   },
   title: {
-    marginBottom: "20px",
+    marginBottom: "15px",
     textAlign: "center",
+    fontSize: "1.1rem",
+    fontWeight: "600",
   },
   chatBox: {
     flex: 1,
     width: "100%",
     maxWidth: "600px",
     background: "rgba(255,255,255,0.05)",
-    borderRadius: "10px",
+    borderRadius: "16px",
     padding: "15px",
     overflowY: "auto",
     marginBottom: "20px",
     display: "flex",
     flexDirection: "column",
-    gap: "10px",
+    gap: "12px",
+    border: "1px solid rgba(255,255,255,0.1)",
   },
   messageBubble: {
-    padding: "10px 15px",
-    borderRadius: "10px",
-    maxWidth: "80%",
-    lineHeight: "1.4",
-    fontSize: "14px",
+    padding: "12px 16px",
+    borderRadius: "12px",
+    maxWidth: "85%",
+    lineHeight: "1.5",
+    fontSize: "15px",
+    wordWrap: "break-word" as const,
+    boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
   },
   controls: {
     display: "flex",
-    gap: "15px",
     justifyContent: "center",
+    width: "100%",
+    paddingBottom: "10px",
   },
   btnStart: {
-    padding: "15px 30px",
-    borderRadius: "30px",
-    background: "rgb(71, 2, 225)",
+    padding: "16px 32px",
+    borderRadius: "50px",
+    background:
+      "linear-gradient(135deg, rgb(71, 2, 225) 0%, rgb(120, 50, 255) 100%)",
     color: "white",
     border: "none",
-    fontSize: "18px",
+    fontSize: "16px",
     cursor: "pointer",
     fontWeight: "bold",
+    width: "100%",
+    maxWidth: "300px",
+    boxShadow: "0 4px 15px rgba(71, 2, 225, 0.4)",
+    transition: "transform 0.1s",
   },
   btnStop: {
-    padding: "15px 30px",
-    borderRadius: "30px",
-    background: "rgb(239, 68, 68)",
+    padding: "16px 32px",
+    borderRadius: "50px",
+    background: "#EF4444",
     color: "white",
     border: "none",
-    fontSize: "18px",
+    fontSize: "16px",
     cursor: "pointer",
     fontWeight: "bold",
-  },
-  btnMute: {
-    padding: "15px 30px",
-    borderRadius: "30px",
-    color: "white",
-    border: "none",
-    fontSize: "18px",
-    cursor: "pointer",
-    fontWeight: "bold",
+    width: "100%",
+    maxWidth: "300px",
+    boxShadow: "0 4px 15px rgba(239, 68, 68, 0.4)",
   },
 } as const;
